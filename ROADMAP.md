@@ -1,4 +1,4 @@
-# Roadmap: kadence (working name)
+# Roadmap: kadence
 
 **kadence** estimates ANI and aligned fraction (AF) from positional FracMinHash sketches. It
 finds homologous regions as runs of matched sketched k-mers, then estimates ANI from the
@@ -6,7 +6,9 @@ rate at which matches arrive inside those regions. It follows skani closely and 
 skani's banded chaining with a run segmentation that has a statistical model behind it. See
 [docs/THEORY.md](docs/THEORY.md) for the analysis behind every default below.
 
-## Open decisions (needed before M2/M3)
+## Decisions
+
+Open decisions (D1–D4 are needed before M3; D5 and D7 can wait):
 
 | ID | Decision | Proposed default |
 |---|---|---|
@@ -15,24 +17,37 @@ skani's banded chaining with a run segmentation that has a statistical model beh
 | D3 | Target ANI range | Accurate at ≥ 90%; reported down to an 85% floor |
 | D4 | Patience | Adaptive (α = 1e-3, floor from `--min-ani 0.85`), with an integer `--patience` override |
 | D5 | v1 CLI scope | `sketch` and `dist` only. `triangle` and `search` move to M5. |
-| D6 | Project and crate name, license | `kadence`, dual MIT/Apache-2.0 like skani |
 | D7 | Main selling point against skani (speed, AF accuracy, or statistical rigor) | Decides benchmark priorities in M4 and M5 |
 
-## Planned repository layout
+Decided (2026-11-16):
+
+| ID | Decision | Outcome |
+|---|---|---|
+| D6 | Project and crate name, license | `kadence`; dual MIT OR Apache-2.0, like skani |
+| D8 | CLI conventions | Our own minimal design (`-i`, `-o`, `-q`, `-r`, `--input-list`, `--query-list`, `--ref-list`), not a skani drop-in. The TSV output also uses our own schema. |
+| D9 | Release artifacts | Static binaries on GitHub Releases for Linux (x86_64, aarch64, musl) and macOS (arm64, x86_64). crates.io and bioconda later. |
+
+## Repository layout
+
+Entries marked (M1) exist; the rest are planned.
 
 ```
-Cargo.toml                 # one crate: lib + bin
-src/main.rs, cli.rs        # clap derive
+Cargo.toml                 # one crate: lib + bin (M1)
+src/main.rs, lib.rs        # entry point, run(), logging (M1)
+src/cli.rs                 # clap derive definitions (M1)
+src/params.rs              # SketchParams, MethodParams, provisional defaults (M1)
+src/commands/{sketch,dist}.rs  # subcommands; stubs until M2/M3 (M1)
 src/io/fastx.rs            # adapted from skani file_io.rs (needletail)
 src/sketch/{seeding,hash,format,mod}.rs
 src/compare/{intersect,segment,estimate,af}.rs
-src/output.rs              # skani-compatible TSV + extra columns
-tests/                     # integration + simulation tests
+src/output.rs              # TSV output (own schema)
+tests/                     # CLI tests (M1); integration + simulation tests later
 benches/                   # criterion micro-benchmarks
 bench/                     # M4 Snakemake pipeline (skani, FastANI, MUMmer)
 analysis/theory.py         # numbers in docs/THEORY.md
-NOTICE                     # skani attribution (MIT OR Apache-2.0)
-.github/workflows/{ci,release}.yml
+NOTICE                     # skani attribution (added in M2, with the adapted code)
+.github/workflows/{ci,release}.yml, .github/dependabot.yml   (M1)
+deny.toml, rustfmt.toml, LICENSE-MIT, LICENSE-APACHE        (M1)
 ```
 
 ---
@@ -41,37 +56,44 @@ NOTICE                     # skani attribution (MIT OR Apache-2.0)
 
 **Goal:** an empty but complete tool skeleton, with green CI and downloadable binaries.
 
-- [ ] Cargo crate with lib and bin targets. Pin a minimum supported Rust version (MSRV).
-  Add `rustfmt.toml` and a clippy config.
-- [ ] CLI (clap derive):
+- [x] Cargo crate with lib and bin targets: edition 2024, MSRV 1.85, `rustfmt.toml`, lint
+  levels in `[lints]`, and a `profiling` build profile (release plus debug symbols).
+- [x] CLI (clap derive):
   - Subcommands: `sketch`, `dist`.
-  - Global flags: `-t/--threads`, `-v/--verbose`, `-o/--output`.
-  - Sketch flags: `-k`, `-c`, `-l/--list`.
-  - Method flags: `--patience`, `--min-anchors`, `--break-alpha`, `--min-ani`,
-    and `--mode {1d,diagonal}`.
-  - Each subcommand is a stub that validates its arguments and exits with code 2.
-- [ ] CI (GitHub Actions, on every push and PR):
+  - Global flags: `-t/--threads` (default 3), `-v/--verbose` (repeatable).
+  - `sketch`: `-i/--input`, `--input-list`, `-o/--output DIR`.
+  - `dist`: `-q/--query`, `--query-list`, `-r/--ref`, `--ref-list`, `-o/--output`
+    (default stdout).
+  - Sketch flags (both subcommands): `-k/--kmer-size` (1–31), `-c/--scale`.
+  - Method flags: `--mode {1d,diagonal}`, `--patience <auto|N>`, `--min-anchors`,
+    `--break-alpha`, `--min-ani`.
+  - Exit codes: an invalid command line gives 2. Valid arguments reach a stub that reports
+    "not implemented yet" and exits with 1.
+- [x] CI (GitHub Actions, on PRs and pushes to `main`):
   - `cargo fmt --check`, `clippy -D warnings`.
   - `cargo test` on ubuntu-latest and macos-latest.
-  - An MSRV job and `cargo-deny` (licenses and advisories).
+  - An MSRV (1.85) check, rustdoc with `-D warnings`, and `cargo-deny` (licenses,
+    advisories, sources).
   - Caching via `Swatinem/rust-cache`.
-- [ ] CD (on tags `v*`): build static binaries for x86_64 and aarch64 Linux (musl) and for
-  macOS arm64 and x86_64. Attach them to a GitHub Release with sha256 sums. Use skani's
-  `release.yml` as the reference.
-- [ ] Dependabot for cargo and actions. README skeleton, LICENSE, NOTICE.
+- [x] CD (on tags `vX.Y.Z` matching `Cargo.toml`): `gh release create` with generated notes,
+  then `taiki-e/upload-rust-binary-action` builds static binaries for x86_64 and aarch64 Linux
+  (musl, via `cross`) and for macOS arm64 and x86_64. Each archive gets a `.sha256` file.
+- [x] Dependabot for cargo and actions. README, LICENSE-MIT, LICENSE-APACHE.
 
 **Done when:**
 
-- CI is green on a PR.
-- Tag `v0.0.1` produces downloadable binaries.
-- `--help` documents every parameter, with the units of patience stated (sketched k-mers).
+- [ ] CI is green on a PR. Verified locally so far: fmt, clippy, 18 tests, MSRV 1.85
+  build, docs, and cargo-deny.
+- [ ] Tag `v0.0.1` produces downloadable binaries.
+- [x] `--help` documents every parameter, with the units of patience stated (sketched
+  k-mers). Covered by `tests/cli.rs`.
 
 ## M2: skani's parsing, plus our sketch representation
 
 **Goal:** `kadence sketch` writes sketches that hold both the position-ordered "scan" view and
 the hash-ordered "set" view.
 
-- [ ] Adapt from skani, crediting it in file headers:
+- [ ] Adapt from skani, crediting it in file headers and in a top-level `NOTICE`:
   - FASTA/FASTQ(.gz) reading via needletail, with minimum contig length 500 and N handling.
   - Rolling canonical k-mers and `mm_hash64`.
   - The AVX2 seeding fast path, ported to `u64`.
@@ -124,8 +146,10 @@ sketch input.
 - [ ] AF: the summed base-pair span of accepted regions, plus boundary padding of the expected
   half-gap (capped at contig ends), divided by genome length. Do this for each genome. Add a
   flag that disables padding, for ablation.
-- [ ] Output: skani-compatible TSV columns, plus `ANI_lo`, `ANI_hi`, `q_hat`, `patience_used`,
-  `n_regions`, and `n_anchors`.
+- [ ] Output: our own documented TSV schema (decision D8). Columns: query and reference
+  names, ANI, `ANI_lo`, `ANI_hi`, AF of the query, AF of the reference, `q_hat`,
+  `patience_used`, `n_regions`, and `n_anchors`. The M4 harness maps these columns to
+  skani's.
 - [ ] Tests:
   - Unit tests:
     - Segmenter edge cases: empty input, all matches, x = 1, y = 1, contig boundaries,
