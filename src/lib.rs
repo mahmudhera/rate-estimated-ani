@@ -4,7 +4,9 @@
 
 pub mod cli;
 pub mod commands;
+pub mod io;
 pub mod params;
+pub mod sketch;
 
 use cli::{Cli, Command};
 

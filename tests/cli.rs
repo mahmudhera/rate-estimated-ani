@@ -77,15 +77,10 @@ fn missing_arguments_exit_with_usage_error() {
 }
 
 #[test]
-fn valid_invocations_report_not_implemented() {
-    for (args, milestone) in [
-        (&["sketch", "-i", "a.fa", "-o", "out"][..], "M2"),
-        (&["dist", "-q", "a.fa", "-r", "b.fa", "-t", "4"][..], "M3"),
-    ] {
-        let o = kadence(args);
-        assert_eq!(o.status.code(), Some(1), "{args:?}");
-        let err = stderr(&o);
-        assert!(err.contains("not implemented yet"), "{err}");
-        assert!(err.contains(milestone), "{err}");
-    }
+fn dist_reports_not_implemented() {
+    let o = kadence(&["dist", "-q", "a.fa", "-r", "b.fa", "-t", "4"]);
+    assert_eq!(o.status.code(), Some(1));
+    let err = stderr(&o);
+    assert!(err.contains("not implemented yet"), "{err}");
+    assert!(err.contains("M3"), "{err}");
 }
