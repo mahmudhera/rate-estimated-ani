@@ -1,0 +1,584 @@
+.\" Typeset version of docs/THEORY.md. Keep the two in sync.
+.\" Build (groff + ghostscript only):
+.\"   groff -e -t -Tps docs/THEORY.roff \
+.\"     | ps2pdf -dPDFSETTINGS=/prepress -dEmbedAllFonts=true - docs/THEORY.pdf
+.\" Numbers come from analysis/theory.py.
+.\"
+.\" ---------------------------------------------------------------- macros
+.pl 11i
+.po 1i
+.ll 6.5i
+.lt 6.5i
+.ps 10.5
+.vs 13.5p
+.hy 4
+.ad b
+.nr FIRST 1
+.de HD
+'sp 0.55i
+.if !\\n[FIRST] .tl '\s8\fIkadence \(em theory notes\fP\s0''\s8\fIRate-based ANI and AF\fP\s0'
+.nr FIRST 0
+'sp 0.4i
+..
+.de FO
+'sp 0.35i
+.tl ''\s9\\n%\s0''
+'bp
+..
+.wh 0 HD
+.wh -0.85i FO
+.\" section heading; $1 = title (no parentheses: it goes into a PDF bookmark)
+.de H1
+.sp 1.1v
+.ie \\n[.$]>1 .ne \\$2v
+.el .ne 6v
+\X'ps: exec [/Title (\\$1) /OUT pdfmark'\c
+.ps 13
+.vs 16p
+.ft B
+.ad l
+\\$1
+.ad b
+.ft R
+.ps 10.5
+.vs 13.5p
+.sp 0.3v
+..
+.\" paragraph
+.de P
+.sp 0.6v
+.ne 2v
+..
+.\" bullet item / numbered item / end list
+.de LI
+.sp 0.3v
+.ne 2v
+.in 0.3i
+.ti -0.17i
+\(bu\h'0.17i-\w'\(bu'u'\c
+..
+.de NI
+.sp 0.3v
+.ne 2v
+.in 0.3i
+.ti -0.22i
+\\$1\h'0.22i-\w'\\$1'u'\c
+..
+.de LE
+.in 0
+..
+.\" table caption; $1 = text, $2 = lines to keep together (default 11)
+.de CAP
+.sp 0.8v
+.ie \\n[.$]>1 .ne \\$2v
+.el .ne 11v
+.ce 1
+\s9\fB\\$1\fP\s0
+..
+.de TS
+.sp 0.3v
+.ad l
+.nh
+.ps 9.5
+.vs 12p
+..
+.de TE
+.ad b
+.hy 4
+.ps 10.5
+.vs 13.5p
+.sp 0.6v
+..
+.de EQ
+.sp 0.45v
+.ce 1000
+..
+.de EN
+.ce 0
+.sp 0.45v
+..
+.EQ
+delim $$
+.EN
+.\" ---------------------------------------------------------------- title
+\X'ps: exec [/Title (Rate-based ANI and aligned fraction from positional FracMinHash sketches) /Subject (Theory notes for kadence) /Keywords (ANI, aligned fraction, FracMinHash, skani, k-mer) /DOCINFO pdfmark'
+.sp 0.2i
+.ce 4
+.ps 17
+.vs 21p
+\fBRate-based ANI and aligned fraction\fP
+\fBfrom positional FracMinHash sketches\fP
+.ps 11
+.vs 15p
+\fITheory notes for \fBkadence\fI (working name)\fR
+16 November 2026
+.ps 10.5
+.vs 13.5p
+.sp 0.6v
+.\" ---------------------------------------------------------------- body
+.H1 "Summary"
+The proposed method is promising and has no fatal flaw.
+It belongs to the same estimator family as Mash [2] and skani [1]:
+ANI $= ( roman "matched" / roman "sketched k-mers inside homologous regions" ) sup {1/k}$.
+Only the region finder differs.
+skani runs banded two-dimensional chaining, using coordinates on both genomes, inside 20\~kb query chunks;
+the proposal runs a one-dimensional run segmentation along one genome's sketch.
+Taken literally, the design has four problems, listed below.
+Each has a fix that costs one linear scan.
+.CAP "Table 1. Issues with the literal design and their fixes" 16
+.TS
+center tab(;);
+cb lb lb lb
+c lw(1.95i) lw(1.45i) lw(2.0i).
+_
+#;Issue;Severity;Fix
+_
+1;T{
+Measuring the match rate per base pair throws away information
+T};T{
+Moderate: 7\(mu the variance at 99% ANI, 67\(mu at 99.9%
+T};T{
+Measure the rate per sketched k-mer; the count is known from the stored positions
+T}
+.sp 0.3v
+2;T{
+No single fixed patience works from 80% to 99.9% ANI
+T};T{
+Major, for AF
+T};T{
+Scale patience to the pair's own match rate (adaptive patience)
+T}
+.sp 0.3v
+3;T{
+Regions are defined by the same matches being counted, which biases ANI upward
+T};T{
+Major below about 90% ANI
+T};T{
+Truncated-geometric maximum-likelihood estimate of the rate
+T}
+.sp 0.3v
+4;T{
+No colinearity check, so spurious and paralogous matches count
+T};T{
+Major at $k = 15$ below about 95% ANI
+T};T{
+Use $k >= 17$, or carry B's position and require diagonal consistency
+T}
+_
+.TE
+.P
+Notation: $a$ is ANI, $k$ the k-mer size, $c$ the FracMinHash scale (one in $c$ k-mers is kept),
+$x$ the \fIpatience\fP (consecutive non-matching sketched k-mers before a region closes),
+$y$ the \fImin-anchors\fP (matches required to accept a region),
+$q = a sup k$, and $s$ the spurious match rate.
+Unless stated otherwise, $c = 125$, genomes are 5\~Mbp, and spurious rates assume random sequence.
+.\" ------------------------------------------------------------------
+.H1 "0. The method under evaluation"
+.LI
+\fBSketch.\fP
+Each genome is sketched with FracMinHash: a canonical k-mer is kept if and only if its hash is below $2 sup 64 / c$.
+The sketch stores the kept k-mers in increasing position order, with contig and strand,
+and also a set view of their hashes.
+.LI
+\fBScan.\fP
+To compare genomes A and B, walk A's sketched k-mers in position order and test each for membership in B's sketch.
+.LI
+\fBRegions.\fP
+A match opens a putative homologous region, and further matches extend it.
+Once $x$ consecutive sketched k-mers fail to match, the region closes at its last match.
+A region is accepted if it contains at least $y$ matches.
+(This is how the acceptance rule is interpreted here.)
+.LI
+\fBANI.\fP
+Within accepted regions, ANI is estimated from the rate at which matches occur:
+a higher rate means a higher ANI.
+.LI
+\fBAF.\fP
+The fraction of a genome covered by accepted regions is its aligned fraction.
+Both A and B need one.
+.LE
+.P
+For comparison, skani keeps matched k-mers with their positions and chains them.
+The chaining is a banded dynamic program over coordinates on both genomes,
+run in 20\~kb query chunks, and a chain needs at least 3 anchors.
+skani then filters to approximately 1-to-1 chains, estimates ANI per chunk as
+$( roman "anchors" / roman "seeds" ) sup {1/k}$, and debiases the result with a gradient-boosted regression model.
+The proposal replaces chaining with a one-dimensional run rule,
+and the per-chunk ratio with a rate estimate.
+.\" ------------------------------------------------------------------
+.H1 "1. Model"
+FracMinHash keeps a k-mer if and only if $h( roman "kmer" ) < 2 sup 64 / c$, which depends only on the k-mer itself.
+So if a sampled k-mer of A is unchanged in B, B sampled it too.
+Under independent substitutions:
+.LI
+Inside a homologous region, each entry of A's position-ordered sketch is a match with probability $q = a sup k$.
+The entries are approximately independent, because sampled k-mers rarely overlap when $c \[>>] k$.
+.LI
+The number of misses $G$ between consecutive matches is geometric,
+with $P(G = g) = (1 - q) sup g q$.
+.LI
+Measured in base pairs, matches form a thinned Poisson process with rate $q / c$.
+This is the \(lqPoisson rate\(rq.
+.LI
+Outside homology, matches occur at a spurious rate $s approx 1 - e sup {-2 |B| / 4 sup k}$ for random sequence.
+Real genomes have a higher rate because their k-mer composition is skewed.
+.LE
+.\" ------------------------------------------------------------------
+.H1 "2. Use the sketch index as the clock, not base pairs"
+The per-base-pair estimator $q hat = m c / L$ has variance $q / n bar$, where $n bar = L / c$.
+The count estimator $q hat = m / n$ has variance $q (1 - q) / n$.
+Because every sketched position is stored, $n$ is known exactly
+(confidence intervals for this count-based FracMinHash setting are derived in [3]).
+The variance ratio is $1 / (1 - q)$:
+.CAP "Table 2. Variance of the per-bp estimator relative to the count estimator" 9
+.TS
+center tab(;);
+cb cb cb
+c c c.
+_
+ANI;$q$ at $k = 15$;Var(per bp) / Var(count)
+_
+0.999;0.985;67\(mu
+0.99;0.860;7.1\(mu
+0.95;0.463;1.9\(mu
+0.90;0.206;1.3\(mu
+_
+.TE
+The per-bp rate also assumes uniform sampling density, which repeats, runs of N and
+low-complexity sequence violate.
+The rate idea still holds, but its clock is the sketch index.
+skani also uses counts.
+.\" ------------------------------------------------------------------
+.H1 "3. Match density sets the resolution" 16
+.CAP "Table 3. Match probability q = a\v'-0.3m'\s-2k\s+2\v'0.3m' and, in brackets, mean distance between matches c/q" 11
+.TS
+center tab(;);
+cb cb cb cb cb cb
+c c c c c c.
+_
+ANI;$k = 15$;$k = 16$;$k = 17$;$k = 19$;$k = 21$
+_
+0.99;0.860 [0.15 kb];0.852 [0.15 kb];0.843 [0.15 kb];0.826 [0.15 kb];0.810 [0.15 kb]
+0.95;0.463 [0.27 kb];0.440 [0.28 kb];0.418 [0.30 kb];0.377 [0.33 kb];0.341 [0.37 kb]
+0.90;0.206 [0.61 kb];0.185 [0.67 kb];0.167 [0.75 kb];0.135 [0.93 kb];0.109 [1.14 kb]
+0.85;0.087 [1.43 kb];0.074 [1.68 kb];0.063 [1.98 kb];0.046 [2.74 kb];0.033 [3.79 kb]
+0.80;0.035 [3.55 kb];0.028 [4.44 kb];0.023 [5.55 kb];0.014 [8.67 kb];0.009 [13.6 kb]
+_
+.TE
+At $c = 125$, region boundaries can be resolved at gene scale (about 1\~kb) only above about 90% ANI.
+Every k-mer method at this sampling density has a floor around 80\(en85% ANI;
+skani reports reliable ANI at about 82% and above.
+Resolution improves linearly as $c$ decreases.
+.\" ------------------------------------------------------------------
+.H1 "4. Patience x"
+A false break happens when a run of misses inside true homology reaches $x$.
+The fraction of a homologous region lost to false breaks is
+.EQ
+(1 - q) sup x ~ ( q x + 1 - q ) .
+.EN
+Table\~4 gives the smallest $x$ that keeps this loss at or below 1%.
+In base pairs, $x c$ is also the smallest non-homologous island the method can detect.
+.CAP "Table 4. Smallest patience x with at most 1% AF loss; in brackets, x\(muc" 11
+.TS
+center tab(;);
+cb cb cb cb cb cb
+c c c c c c.
+_
+ANI;$k = 15$;$k = 16$;$k = 17$;$k = 19$;$k = 21$
+_
+0.99;3 (0.4 kb);3 (0.4 kb);4 (0.5 kb);4 (0.5 kb);4 (0.5 kb)
+0.95;11 (1.4 kb);11 (1.4 kb);12 (1.5 kb);14 (1.8 kb);16 (2.0 kb)
+0.90;29 (3.6 kb);32 (4.0 kb);36 (4.5 kb);46 (5.8 kb);57 (7.1 kb)
+0.85;72 (9.0 kb);86 (10.8 kb);102 (12.8 kb);142 (17.8 kb);198 (24.8 kb)
+0.80;185 (23 kb);232 (29 kb);291 (36 kb);457 (57 kb);716 (90 kb)
+_
+.TE
+\fBThis creates a dilemma.\fP
+At $k = 17$, an 85% ANI pair needs $x approx 100$.
+Applied to a 99% ANI pair, $x = 100$ bridges every non-homologous island shorter than about 12.8\~kb
+and counts it as aligned.
+AF is then inflated in strain-level comparisons, where AF matters most.
+Going the other way, $x = 4$ is right at 99% ANI but breaks an 85% pair into fragments.
+.P
+\fBFix: adaptive patience.\fP
+Let $alpha$ be the per-gap false-break probability, and set
+.EQ
+x(q) ~=~ left ceiling { ln alpha } over { ln (1 - q) } right ceiling .
+.EN
+.CAP "Table 5. Adaptive patience x(q) with \(*a = 0.001" 8
+.TS
+center tab(;);
+cb cb cb cb cb cb
+c c c c c c.
+_
+$k$;ANI 0.99;0.95;0.90;0.85;0.80
+_
+15;4;12;30;76;193
+17;4;13;38;106;304
+19;4;15;48;149;476
+_
+.TE
+.ne 7v
+Adaptive patience runs in stages:
+.NI 1.
+Segment with a floor patience $x( q sub roman "floor" )$ taken from \f(CR--min-ani\fP.
+.NI 2.
+Estimate $q hat$ as in Section\~5.
+.NI 3.
+Re-segment with $x( q hat )$.
+.NI 4.
+Repeat steps 2\(en3 until $x$ stops changing, usually within 2\(en3 rounds.
+.LE
+.P
+Each round is one linear scan over a bit vector, so the cost is negligible.
+.P
+\fBInterpretation.\fP
+This rule is exactly the Viterbi decision of a two-state hidden Markov model.
+The states are \(lqhomologous\(rq (match probability $q$) and \(lqbackground\(rq ($s approx 0$),
+and the state-switch probability is $alpha$.
+Leaving the homologous state costs $ln (1 / alpha )$,
+and each miss inside it costs $ln ( 1 / (1 - q) )$.
+Patience is therefore a principled quantity, not just a knob.
+A full HMM is a natural later upgrade:
+it would handle local variation in ANI and give posterior region boundaries.
+.\" ------------------------------------------------------------------
+.H1 "5. Estimator bias from the segmentation rule"
+Each region starts and ends with a match, and by construction every internal gap is shorter than $x$.
+So the naive estimate $( m / n ) sup {1/k}$ inside regions is biased upward unless $x \[>>] 1 / q$.
+.CAP "Table 6. Naive ANI estimate at k = 17, from theory with gaps pooled across regions" 9
+.TS
+center tab(;);
+cb cb cb cb cb
+c c c c c.
+_
+$x$;true 0.95;true 0.90;true 0.85;true 0.80
+_
+10;0.9511;0.9207;0.9100;0.9064
+20;0.9500;0.9050;0.8824;0.8747
+40;0.9500;0.9002;0.8613;0.8450
+80;0.9500;0.9000;0.8514;0.8203
+_
+.TE
+.CAP "Table 7. Monte Carlo with 400,000 sketched k-mers at k = 17" 9
+.TS
+center tab(;);
+cb cb cb cb
+c c c c.
+_
+True ANI;$x$;Naive $m/n$;Truncated-geometric MLE
+_
+0.85;20;0.8969;\fB0.8505\fP
+0.85;40;0.8649;\fB0.8499\fP
+0.90;15;0.9128;\fB0.8997\fP
+0.95;6;0.9571;\fB0.9499\fP
+_
+.TE
+The naive estimate in the Monte Carlo is worse than the pooled-gap theory predicts.
+Short regions also contribute a \(lqfree\(rq boundary match each, which the pooled-gap formula ignores.
+.P
+\fBFix.\fP
+Treat the $m - 1$ internal gaps of each accepted region as draws from a geometric distribution
+truncated to $G < x$.
+The log-likelihood of one gap $g$ is
+.EQ
+L(q; g) ~=~ g ln (1 - q) ~+~ ln q ~-~ ln ( 1 - (1 - q) sup x ) .
+.EN
+Setting the score to zero gives $roman E sub q [ G ~ "|" ~ G < x ] = G bar$, the mean observed gap, where
+.EQ
+roman E sub q [ G ~ "|" ~ G < x ] ~=~ {(1 - q) ( 1 - x (1 - q) sup {x - 1} + (x - 1)(1 - q) sup x )} over {q ( 1 - (1 - q) sup x )} .
+.EN
+This is monotone in $q$, so bisection solves it.
+The Fisher information gives an analytic standard error,
+and the delta method turns it into a confidence interval for ANI.
+No bootstrap is needed (skani uses one).
+This estimator is the cleanest form of the \(lqPoisson rate\(rq idea:
+the rate is estimated from the waiting times between matches.
+.\" ------------------------------------------------------------------
+.H1 "6. Spurious matches without colinearity"
+.CAP "Table 8. Spurious match rate s per sketched k-mer, random 5 Mbp genome, both strands" 9
+.TS
+center tab(;);
+cb cb cb cb cb cb
+c c c c c c.
+_
+$k$;15;16;17;19;21
+_
+$s$;$9.3 times 10 sup -3$;$2.3 times 10 sup -3$;$5.8 times 10 sup -4$;$3.6 times 10 sup -5$;$2.3 times 10 sup -6$
+_
+.TE
+Spurious-region pressure is $s x$, with $x$ tuned to the ANI floor; it should be well below 0.1.
+.CAP "Table 9. Spurious-region pressure s\(mux with x tuned to the ANI floor" 9
+.TS
+center tab(;);
+cb cb cb cb cb cb
+c c c c c c.
+_
+ANI floor;$k = 15$;$k = 16$;$k = 17$;$k = 19$;$k = 21$
+_
+0.95;0.102;0.026;0.007;0.001;0.000
+0.90;0.269;0.074;0.021;0.002;0.000
+0.85;\fB0.667\fP;0.200;0.059;0.005;0.000
+0.80;\fB1.715\fP;0.540;0.169;0.017;0.002
+_
+.TE
+The expected number of false regions per genome is about $n s ( s x ) sup {y - 1}$, where $n = |A| / c$:
+.CAP "Table 10. Expected false regions per 5 Mbp genome, x tuned for 85% ANI" 9
+.TS
+center tab(;);
+cb cb cb cb cb
+c c c c c.
+_
+$k$ ($x$);$y = 2$;$y = 3$;$y = 4$;$y = 5$
+_
+15 (72);247;165;110;74
+16 (86);18.6;3.7;0.74;0.15
+17 (102);1.4;0.08;0.005;$3 times 10 sup -4$
+19 (142);0.008;$4 times 10 sup -5$;$2 times 10 sup -7$;$1 times 10 sup -9$
+_
+.TE
+skani's $k = 15$ is safe only because its chaining requires coordinates on both genomes to agree.
+Under the pure one-dimensional rule, $k = 15$ works only for ANI of about 95% and above.
+There are two options:
+.LI
+\fB(a) Keep the 1-D rule and raise k to 17\(en19.\fP
+skani stores seeds as 32-bit k-mers, which allows $k <= 16$, so seeds would become 64-bit values.
+At 90% ANI and above, the variance cost is small, because the standard deviation of the ANI estimate
+barely depends on $k$ there.
+At 85% ANI, though, the mean gap between matches grows from 1.4\~kb to 2.0\(en2.7\~kb,
+so boundaries are resolved less finely.
+.LI
+\fB(b) Keep k = 15 and carry B's position with each match (\(lqdiagonal mode\(rq).\fP
+A match extends the current region only if its diagonal is within a band of the region's running diagonal.
+The diagonal is $p sub A - p sub B$, or $p sub A + p sub B$ for reverse-strand matches.
+Any other match counts as a miss.
+This is still one linear scan, in effect \(lqchaining-lite\(rq.
+It removes spurious and paralogous matches, and gives every region an interval on B as well (Section\~8).
+.LE
+.P
+\fBRepeats.\fP
+Under the 1-D rule, every copy of a repeat in A matches if any copy exists in B.
+This inflates AF for the genome with more repeats;
+IS elements and rRNA operons are typically 1\(en3% of a bacterial genome.
+Option (b) plus a 1-to-1 overlap filter removes the inflation.
+.\" ------------------------------------------------------------------
+.H1 "7. Min-anchors y"
+$y$ does two jobs.
+First, it rejects spurious regions:
+by Table\~10, $y = 3$ gives fewer than 0.1 false regions per genome at $k >= 17$, even with $x approx 100$.
+Second, it sets the smallest usable contig, which is about $y c / q$:
+.CAP "Table 11. Smallest contig expected to yield y anchors at k = 17" 10
+.TS
+center tab(;);
+cb cb cb cb
+c c c c.
+_
+ANI;$y = 3$;$y = 4$;$y = 5$
+_
+0.99;0.4 kb;0.6 kb;0.7 kb
+0.95;0.9 kb;1.2 kb;1.5 kb
+0.90;2.2 kb;3.0 kb;3.7 kb
+0.85;5.9 kb;7.9 kb;9.9 kb
+0.80;16.7 kb;22.2 kb;27.8 kb
+_
+.TE
+$y = 3$ matches skani's minimum chain size.
+At 85% ANI, contigs shorter than about 6\~kb add nothing to AF whatever $y$ is.
+This is inherent to $c = 125$; fragmented MAGs need a lower $c$.
+.\" ------------------------------------------------------------------
+.H1 "8. The two-pass AF problem"
+\fBWhat skani does.\fP
+Its chains are approximately 1-to-1.
+It counts aligned bases on the query once and divides that count by both genome lengths,
+so AF for the reference is the aligned query bases divided by the reference length.
+This is cheap, but correct only to the extent the chains really are 1-to-1.
+.P
+\fBWhat this method does.\fP
+The expensive step, finding shared k-mers, is symmetric, so the two sketches are intersected once:
+.NI 1.
+Merge-join the two hash-sorted arrays.
+This is cache-friendly; skani's \f(CR\%get_anchors\fP also uses a galloping merge-join rather than hash lookups.
+.NI 2.
+For each shared hash, set a bit for each of its entries in both genomes' position-ordered arrays,
+using the stored ranks.
+.NI 3.
+Segment each genome with one linear scan over its bit vector.
+.LE
+.P
+The total cost is $O( n sub A + n sub B )$.
+No 1-to-1 assumption is needed, and the AF of A and of B are each exact under the method's own definition.
+In diagonal mode, each region already carries an interval on both genomes.
+A single scan then gives both AFs, and overlapping projections onto B provide a 1-to-1 filter.
+.P
+\fBBonus: symmetric ANI.\fP
+Pooling gaps from both sides makes ANI(A, B) = ANI(B, A) exactly.
+skani is asymmetric: it chooses which genome is the query
+using a score of genome length times mean contig length.
+.\" ------------------------------------------------------------------
+.H1 "9. Caveats shared with every k-mer ANI method"
+.LI
+\fBHeterogeneous divergence.\fP
+By Jensen's inequality, $roman E [ a sup k ] > ( roman E [a] ) sup k$.
+Pooled k-mer ANI therefore overestimates alignment ANI when divergence varies along the genome.
+Per-region estimates help.
+skani corrects this with a gradient-boosted model trained against ANIm.
+.LI
+\fBIndels\fP destroy k-mers, but alignment ANI ignores them, so k-mer ANI runs slightly low.
+.LI
+\fBFragmented MAGs.\fP
+Regions cannot cross contig ends (Section\~7).
+.LI
+\fBANI floor\fP of about 80\(en85% at $c = 125$ (Section\~3).
+.LE
+.\" ------------------------------------------------------------------
+.H1 "10. Proposed defaults" 17
+These defaults are pending the open decisions listed in ROADMAP.md.
+.CAP "Table 12. Proposed defaults" 12
+.TS
+center tab(;);
+lb lb lb lb
+l l lw(1.9i) l.
+_
+Parameter;Flag;Default;Basis
+_
+$k$;\f(CR-k\fP;T{
+17 in 1-D mode, 15 in diagonal mode
+T};Section 6
+$c$;\f(CR-c\fP;125;skani default, Section 3
+patience $x$;\f(CR--patience\fP;T{
+adaptive, with an integer override
+T};Section 4
+false-break probability $alpha$;\f(CR--break-alpha\fP;$10 sup -3$;Section 4
+ANI floor for stage 1;\f(CR--min-ani\fP;T{
+0.85 ($x approx 102$ at $k = 17$, 72 at $k = 15$)
+T};Sections 3, 4
+min-anchors $y$;\f(CR--min-anchors\fP;3;Section 7
+_
+.TE
+.\" ------------------------------------------------------------------
+.H1 "Reproducibility"
+.ad l
+Every number in these notes is produced by \f(CR\%analysis/theory.py\fP,
+which uses only the Python standard library.
+Run it with \f(CR\%python3\ \%analysis/theory.py\fP.
+The Monte Carlo in Table\~7 uses 400,000 simulated sketched k-mers with a fixed random seed.
+.ad b
+.H1 "References"
+.de RF
+.sp 0.35v
+.in 0.3i
+.ti -0.3i
+\\$1\h'0.3i-\w'\\$1'u'\c
+..
+.RF [1]
+J. Shaw and Y. W. Yu.
+Fast and robust metagenomic sequence comparison through sparse chaining with skani.
+\fINature Methods\fP 20, 1661\(en1665 (2023).
+.RF [2]
+B. D. Ondov et al.
+Mash: fast genome and metagenome distance estimation using MinHash.
+\fIGenome Biology\fP 17, 132 (2016).
+.RF [3]
+M. R. Hera, N. T. Pierce-Ward and D. Koslicki.
+Deriving confidence intervals for mutation rates across a wide range of evolutionary distances using FracMinHash.
+\fIGenome Research\fP 33, 1061\(en1068 (2023).
+.LE
