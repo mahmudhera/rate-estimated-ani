@@ -8,12 +8,11 @@ skani's banded chaining with a run segmentation that has a statistical model beh
 
 ## Decisions
 
-Open decisions (D1–D4 are needed before M3; D5 and D7 can wait):
+Open decisions (D1, D3 and D4 are needed before M3; D5 and D7 can wait):
 
 | ID | Decision | Proposed default |
 |---|---|---|
 | D1 | Region finding: pure 1-D, or diagonal mode | Implement both, since they share about 90% of the code. Default chosen by M4 results. |
-| D2 | Seed type | `u64` hashes (k ≤ 31). This drops skani's k ≤ 16 limit. |
 | D3 | Target ANI range | Accurate at ≥ 90%; reported down to an 85% floor |
 | D4 | Patience | Adaptive (α = 1e-3, floor from `--min-ani 0.85`), with an integer `--patience` override |
 | D5 | v1 CLI scope | `sketch` and `dist` only. `triangle` and `search` move to M5. |
@@ -26,6 +25,14 @@ Decided (2026-11-16):
 | D6 | Project and crate name, license | `kadence`; dual MIT OR Apache-2.0, like skani |
 | D8 | CLI conventions | Our own minimal design (`-i`, `-o`, `-q`, `-r`, `--input-list`, `--query-list`, `--ref-list`), not a skani drop-in. The TSV output also uses our own schema. |
 | D9 | Release artifacts | Static binaries on GitHub Releases for Linux (x86_64, aarch64, musl) and macOS (arm64, x86_64). crates.io and bioconda later. |
+| D2 | Seed value | 64-bit `mm_hash64` hash of the canonical k-mer; k ≤ 31 (no 16-base limit as in skani). |
+| D10 | Sketch file format | Custom versioned little-endian binary (`.ksk`) with a word-wise FNV-style checksum. bincode is unmaintained (RUSTSEC-2025-0141). |
+| D11 | Sketch output layout | One file per genome, `OUT/<input file name>.ksk`. A consolidated database waits for M5. |
+| D12 | Repeated k-mers | Keep every occurrence in the sketch; masking is a comparison-time option (M3). |
+| D13 | Non-ACGT bases | Any non-ACGT base breaks k-mers (skani only breaks at N and reads other IUPAC codes as A). |
+| D14 | Short contigs | Skip contigs < 500 bp (as skani), configurable with `--min-contig-len`. |
+| D15 | SIMD | Port skani's AVX2 path only if the scalar path is slower than skani. It was, so it is ported, with runtime detection and a scalar fallback. |
+| D16 | Output collisions | Fail before writing if two inputs map to the same sketch file; overwrite existing sketches. |
 
 ## Repository layout
 
@@ -37,15 +44,18 @@ src/main.rs, lib.rs        # entry point, run(), logging (M1)
 src/cli.rs                 # clap derive definitions (M1)
 src/params.rs              # SketchParams, MethodParams, provisional defaults (M1)
 src/commands/{sketch,dist}.rs  # subcommands; stubs until M2/M3 (M1)
-src/io/fastx.rs            # adapted from skani file_io.rs (needletail)
-src/sketch/{seeding,hash,format,mod}.rs
+src/io.rs                  # FASTA/FASTQ via needletail, path lists (M2)
+src/sketch/mod.rs          # Sketch (scan + set views), SketchBuilder, BitVec (M2)
+src/sketch/kmer.rs         # rolling canonical k-mers, mm_hash64, scalar sampler (M2)
+src/sketch/simd.rs         # AVX2 sampler, runtime-dispatched (M2)
+src/sketch/format.rs       # .ksk binary format v1 (M2)
 src/compare/{intersect,segment,estimate,af}.rs
 src/output.rs              # TSV output (own schema)
 tests/                     # CLI tests (M1); integration + simulation tests later
 benches/                   # criterion micro-benchmarks
 bench/                     # M4 Snakemake pipeline (skani, FastANI, MUMmer)
 analysis/theory.py         # numbers in docs/THEORY.md
-NOTICE                     # skani attribution (added in M2, with the adapted code)
+NOTICE                     # skani attribution (M2)
 .github/workflows/{ci,release}.yml, .github/dependabot.yml   (M1)
 deny.toml, rustfmt.toml, LICENSE-MIT, LICENSE-APACHE        (M1)
 ```
@@ -93,38 +103,100 @@ deny.toml, rustfmt.toml, LICENSE-MIT, LICENSE-APACHE        (M1)
 **Goal:** `kadence sketch` writes sketches that hold both the position-ordered "scan" view and
 the hash-ordered "set" view.
 
-- [ ] Adapt from skani, crediting it in file headers and in a top-level `NOTICE`:
-  - FASTA/FASTQ(.gz) reading via needletail, with minimum contig length 500 and N handling.
-  - Rolling canonical k-mers and `mm_hash64`.
-  - The AVX2 seeding fast path, ported to `u64`.
-  - rayon parallelism across files, and list-file input.
-- [ ] Drop for now: AAI/ORF code, marker sketches (they return for screening in M5), and the
-  GBDT model.
-- [ ] Sketch layout, struct-of-arrays:
+- [x] Adapted from skani (credited in file headers and `NOTICE`):
+  - FASTA/FASTQ reading via needletail 0.7: plain, gzip, bzip2, xz or zstd. Every record is a
+    contig, and contigs under `--min-contig-len` (default 500) are skipped.
+  - Rolling canonical k-mers and `mm_hash64`, with FracMinHash keeping hash < 2^64/c.
+  - The AVX2 sampling path, ported to 64-bit hashes and k ≤ 31, with runtime detection and
+    a scalar fallback. `KADENCE_NO_SIMD=1` forces the scalar path.
+  - rayon parallelism across files, and list-file input (`--input-list`).
+- [x] Dropped for now: AAI/ORF code, marker sketches (they return for screening in M5), and
+  the GBDT model.
+- [x] Sketch layout (`src/sketch/mod.rs`), struct-of-arrays:
   ```
-  contig_names, contig_lens, contig_offsets   // offsets index into the pos-ordered arrays
-  hash: Vec<u64>, pos: Vec<u32>, strand: bitvec    // position order (scan view)
-  by_hash: Vec<u32>                                 // ranks sorted by (hash, rank) (set view)
+  contig_names, contig_lengths, contig_offsets   // offsets index into the scan view
+  hashes: Vec<u64>, positions: Vec<u32>, forward: BitVec   // scan view, position order
+  by_hash: Vec<u32>          // set view: entry indices sorted by (hash, index)
   ```
-  This takes about 16 bytes per seed, roughly 650 KB per 5 Mbp genome at c = 125. Benchmark
-  `by_hash` against a separate contiguous `sorted_hash: Vec<u64>` to see which merge-join is
-  faster.
-- [ ] Repeat masking: drop seeds that occur more than 2500/c times (skani's rule), configurable.
-- [ ] Versioned binary format: start with bincode, as skani does, and evaluate mmap or rkyv
-  zero-copy loading in M5.
-- [ ] Tests:
-  - Hand-checked k-mers on tiny sequences.
-  - Reverse-complement invariance: same hash multiset, mirrored positions.
-  - Positions monotone within each contig, with contig offsets consistent.
-  - Statistical check that the sampling rate is 1/c on random sequence.
-  - Serialization round-trip.
-  - Seed-set parity with skani at k = 15, as a sanity check.
+  This takes about 16 bytes per entry, 600 KB for a 4.7 Mbp E. coli at c = 125. Positions are
+  0-based k-mer starts within their contig. `forward` records whether the forward k-mer is
+  the canonical one, which diagonal mode needs. The comparison between `by_hash` and a
+  separate contiguous `sorted_hash` array moves to M3, where the merge-join lives.
+- [x] Repeats are kept, not masked (decision D12). Every occurrence is an entry, and copies
+  form contiguous runs in `by_hash`.
+- [x] Versioned binary format `.ksk` v1 (`src/sketch/format.rs`, decision D10):
+  - Header, arrays and a word-wise FNV-style checksum.
+  - Written to a temporary file and renamed into place, with no fsync. fsync made sketching
+    1.4× slower and is very slow on network filesystems.
+  - Readers reject bad magic, other versions, bad checksums, truncation and trailing bytes,
+    and validate every invariant.
+- [x] Tests: 43 unit and 12 end-to-end (55), all passing. The AVX2 tests run only on
+  x86_64 CPUs with AVX2, such as the Linux CI runners.
+  - The rolling sampler equals a brute-force reference for k from 1 to 31 and several c, with
+    lowercase, N and IUPAC bases. The dispatched (AVX2) path equals the scalar path, checked
+    inside every sampler test.
+  - Reverse complement gives the same hashes, mirrored positions and flipped strands.
+  - Positions are strictly increasing within each contig, and offsets, the set-view
+    permutation and its ordering are consistent (`Sketch::validate`).
+  - The sampling rate is within 5 sd of 1/c on 2 Mbp of random sequence.
+  - Serialization round-trips, corruption is detected, and gzip input matches plain input.
+  - CLI: list input, name collisions (nothing written), partial failures (good inputs still
+    written, exit code 1), overwriting, empty input, `--min-contig-len`, and byte-identical
+    output for 1 and 4 threads.
+  - **Changed: no seed-set parity test with skani.** skani v0.4.0's seed is not the canonical
+    k-mer at its position. Both its scalar and AVX2 paths take the canonical form as
+    min(forward of the last k-mer, reverse complement of the first k-mer) of a 21-base
+    window. Ported to Python, 66.6% of skani's seeds differ from the canonical 15-mer at
+    their position. The seeds are still strand-symmetric and survive mutation like k ≈ 15–16
+    (measured 15.1–15.9), but an exact seed-set match is impossible by design. The
+    brute-force reference replaces the parity test. Worth reporting upstream.
+
+**Benchmark** (skani's 7 bacterial test genomes × 4 = 28 files, ~140 Mbp; Xeon Gold 5416S
+shared with other jobs at load ≈ 30/64, so medians of interleaved runs):
+
+Medians of 7–9 interleaved skani/kadence pairs, at k = 15 and c = 125 to match skani.
+Sessions A and B were about 10 minutes apart.
+
+| Run | skani | kadence | kadence / skani |
+|---|---|---|---|
+| 1 thread, scalar sampling only | 563 ms CPU | 713 ms CPU | 1.27 CPU |
+| 1 thread, AVX2 (session A) | 586 ms CPU, 519 ms wall | 586 ms CPU, 587 ms wall | 1.00 CPU, 1.14 wall |
+| 1 thread, final build (session B, load ≈ 33) | 841 ms CPU, 778 ms wall | 1081 ms CPU, 1081 ms wall | 1.22 CPU, 1.33 wall (pairs ranged 0.86–1.72) |
+| 8 threads, AVX2 (session A) | 151 ms wall | 171 ms wall | 1.18 wall |
+| 8 threads, final build (session B) | 191 ms wall, 1117 ms CPU | 195 ms wall, 1206 ms CPU | 1.05 wall, 1.08 CPU |
+
+Measured within kadence:
+
+- Dropping fsync made it 1.4× faster.
+- AVX2 sampling is 17% faster end-to-end than scalar sampling, and about 2× faster for the
+  sampling stage alone.
+- Two other ideas were tried and dropped because they were slower: a two-stream scalar loop
+  (2.30 vs 2.22 ns/base) and three-pass blocking (about 1.5× slower).
+
+Stage costs (scalar, quieter moment), in ns per base:
+
+| Stage | ns/base |
+|---|---|
+| Parse + sequence copy | 1.1 |
+| Sampling | 2.2 |
+| Entry push + set-view sort | 0.4 |
+| Serialization | 0.1 |
+
+**Verdict:** within about 5–20% of skani, and not reproducibly faster. The machine was shared
+(another user's job used about 29 cores), and identical runs varied by up to 1.7×. The user
+time at 8 threads (734 vs 648 ms) suggests kadence still does about 13% more per-core work.
+Next steps:
+
+- Re-measure on an idle node with hyperfine, as part of M4.
+- If the gap holds, candidates for M5: stream multi-line FASTA without copying the sequence,
+  pre-size the entry vectors, and overlap writing with sketching.
 
 **Done when:**
 
-- Sketches build for skani's E. coli fixtures.
-- All invariants pass.
-- Sketching throughput is at least skani's, measured with hyperfine.
+- [x] Sketches build for skani's E. coli fixtures.
+- [x] All invariants pass.
+- [ ] Sketching throughput is at least skani's. Near parity, but not shown conclusively (see
+  the benchmark above); re-measure on an idle node in M4.
 
 ## M3: method v1 and testing
 

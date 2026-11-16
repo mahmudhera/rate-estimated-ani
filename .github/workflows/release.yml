@@ -57,6 +57,6 @@ jobs:
           bin: kadence
           target: ${{ matrix.target }}
           archive: $bin-$tag-$target
-          include: LICENSE-MIT,LICENSE-APACHE,README.md
+          include: LICENSE-MIT,LICENSE-APACHE,NOTICE,README.md
           checksum: sha256
           token: ${{ secrets.GITHUB_TOKEN }}

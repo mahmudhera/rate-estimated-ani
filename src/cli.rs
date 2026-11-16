@@ -140,6 +140,10 @@ pub struct SketchOpts {
         value_parser = clap::value_parser!(u32).range(1..)
     )]
     pub c: u32,
+
+    /// Skip contigs shorter than N bases; they also don't count toward genome length.
+    #[arg(long, value_name = "N", default_value_t = params::DEFAULT_MIN_CONTIG_LEN)]
+    pub min_contig_len: u32,
 }
 
 /// Region-finding and estimation parameters. Defaults are provisional (docs/THEORY.md).
@@ -185,7 +189,11 @@ pub struct MethodOpts {
 
 impl From<&SketchOpts> for SketchParams {
     fn from(o: &SketchOpts) -> Self {
-        Self { k: o.k, c: o.c }
+        Self {
+            k: o.k,
+            c: o.c,
+            min_contig_len: o.min_contig_len,
+        }
     }
 }
 
@@ -308,7 +316,11 @@ mod tests {
         assert_eq!(m.min_ani, 0.9);
         assert_eq!(
             SketchParams::from(&args.sketch),
-            SketchParams { k: 15, c: 200 }
+            SketchParams {
+                k: 15,
+                c: 200,
+                min_contig_len: params::DEFAULT_MIN_CONTIG_LEN
+            }
         );
         assert_eq!(args.query.len(), 2);
         assert_eq!(cli.global.threads, 8);

@@ -13,6 +13,8 @@ pub const DEFAULT_K: u8 = 17;
 pub const MAX_K: u8 = 31;
 /// Default FracMinHash scale: keep about one in `c` k-mers.
 pub const DEFAULT_C: u32 = 125;
+/// Contigs shorter than this are left out of a sketch and of the genome length (as in skani).
+pub const DEFAULT_MIN_CONTIG_LEN: u32 = 500;
 /// Default number of matched sketched k-mers required to accept a region.
 pub const DEFAULT_MIN_ANCHORS: u32 = 3;
 /// Default per-gap false-break probability for adaptive patience.
@@ -84,6 +86,16 @@ pub struct SketchParams {
     pub k: u8,
     /// FracMinHash scale; about one in `c` k-mers is kept.
     pub c: u32,
+    /// Contigs shorter than this many bases are skipped.
+    pub min_contig_len: u32,
+}
+
+impl SketchParams {
+    /// Whether two sketches sample the same k-mers, so their hashes can be compared.
+    /// `min_contig_len` does not affect which k-mers are sampled.
+    pub fn compatible_with(&self, other: &Self) -> bool {
+        self.k == other.k && self.c == other.c
+    }
 }
 
 impl Default for SketchParams {
@@ -91,6 +103,7 @@ impl Default for SketchParams {
         Self {
             k: DEFAULT_K,
             c: DEFAULT_C,
+            min_contig_len: DEFAULT_MIN_CONTIG_LEN,
         }
     }
 }

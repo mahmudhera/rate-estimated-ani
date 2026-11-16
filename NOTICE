@@ -1,0 +1,16 @@
+kadence
+Copyright (c) 2026 The kadence contributors
+Licensed under the MIT License or the Apache License, Version 2.0, at your option.
+
+This product includes code adapted from skani
+(https://github.com/bluenote-1577/skani), Copyright (c) 2022 Jim Shaw,
+licensed under the MIT License or the Apache License, Version 2.0:
+
+  - src/sketch/kmer.rs  rolling canonical k-mer extraction and FracMinHash
+                        sampling (from skani src/seeding.rs and src/types.rs)
+  - src/sketch/simd.rs  four-lane AVX2 sampling (from skani src/avx2_seeding.rs)
+  - src/io.rs           FASTA/FASTQ reading with needletail (from skani
+                        src/file_io.rs)
+
+The k-mer hash `mm_hash64` is the invertible 64-bit integer hash that skani
+takes from minimap2 (https://github.com/lh3/minimap2, MIT License).
