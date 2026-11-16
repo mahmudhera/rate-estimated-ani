@@ -18,7 +18,7 @@ jobs:
     name: create release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check the tag matches Cargo.toml
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
@@ -48,7 +48,7 @@ jobs:
             os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       # Uses `cross` for the Linux musl targets; archives the binary with the
       # licenses and README, and uploads it with a .sha256 checksum file.
