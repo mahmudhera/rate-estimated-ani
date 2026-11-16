@@ -1,0 +1,38 @@
+[package]
+name = "kadence"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+description = "Rate-based ANI and aligned-fraction estimation from positional FracMinHash sketches"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mahmudhera/rate-estimated-ani"
+readme = "README.md"
+keywords = ["bioinformatics", "genomics", "ani", "sketching", "kmer"]
+categories = ["science", "command-line-utilities"]
+exclude = ["/.github", "/analysis", "/docs"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.5", features = ["derive", "wrap_help"] }
+env_logger = "0.11"
+log = "0.4"
+
+[lints.rust]
+rust_2018_idioms = { level = "warn", priority = -1 }
+# Relax per module (e.g. SIMD seeding in M2) with #[allow(unsafe_code)].
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+# Release speed with debug symbols, for perf/flamegraph work:
+#   cargo build --profile profiling
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"
